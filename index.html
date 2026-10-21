@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Smart Attendance Dashboard</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f1f5f9;
+      color: #172033;
+    }
+
+    header {
+      background: #003153;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+
+    main {
+      max-width: 900px;
+      margin: 20px auto;
+      padding: 15px;
+    }
+
+    .card {
+      background: white;
+      padding: 20px;
+      margin-bottom: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px #0001;
+    }
+
+    input, button {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      margin: 7px 0;
+      font-size: 16px;
+      border-radius: 6px;
+    }
+
+    input {
+      border: 1px solid #cbd5e1;
+    }
+
+    button {
+      border: none;
+      background: #003153;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .stat {
+      background: #e8f0f8;
+      padding: 15px;
+      text-align: center;
+      border-radius: 8px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 450px;
+    }
+
+    th, td {
+      padding: 10px;
+      border-bottom: 1px solid #ddd;
+      text-align: left;
+    }
+
+    .status {
+      font-weight: bold;
+    }
+
+    @media (max-width: 500px) {
+      .stats {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h2>Smart RFID Attendance</h2>
+    <p>Teacher Dashboard</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h3>Start Attendance</h3>
+
+      <input
+        id="subject"
+        placeholder="Enter subject or class name"
+      >
+
+      <button onclick="startSession()">
+        Start New Session
+      </button>
+
+      <p id="sessionInfo">No session selected.</p>
+    </section>
+
+    <section class="card">
+      <h3>Attendance Summary</h3>
+
+      <div class="stats">
+        <div class="stat">
+          <h2 id="present">0</h2>
+          <p>Present</p>
+        </div>
+
+        <div class="stat">
+          <h2 id="absent">0</h2>
+          <p>Absent</p>
+        </div>
+
+        <div class="stat">
+          <h2 id="total">0</h2>
+          <p>Total Students</p>
+        </div>
+      </div>
+
+      <p id="sessionStatus">Session not started.</p>
+
+      <button id="refreshButton" onclick="refreshAttendance()" disabled>
+        Refresh Attendance
+      </button>
+
+      <button id="completeButton" onclick="completeSession()" disabled>
+        Complete Attendance
+      </button>
+    </section>
+
+    <section class="card">
+      <h3>Attendance Records</h3>
+
+      <p id="dateInfo">Date: —</p>
+      <p id="completedInfo"></p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>RFID UID</th>
+              <th>Time</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+
+          <tbody id="attendanceTable">
+            <tr>
+              <td colspan="4">No attendance records yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Change this to the backend's reachable address.
+    const API = "http://127.0.0.1:8000";
+
+    let sessionID = null;
+    let isOpen = false;
+    let refreshTimer = null;
+
+    async function apiRequest(path, options = {}) {
+      const response = await fetch(API + path, options);
+
+      if (!response.ok) {
+        throw new Error("Server returned " + response.status);
+      }
+
+      return response.json();
+    }
+
+    async function startSession() {
+      const subject = document.getElementById("subject").value.trim();
+
+      if (!subject) {
+        alert("Enter the subject or class name.");
+        return;
+      }
+
+      try {
+        const data = await apiRequest("/sessions/start", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ subject })
+        });
+
+        sessionID = data.session_id;
+        isOpen = true;
+
+        document.getElementById("sessionInfo").textContent =
+          "Session ID: " + sessionID + " | " + data.subject;
+
+        document.getElementById("sessionStatus").textContent =
+          "Attendance in progress";
+
+        document.getElementById("refreshButton").disabled = false;
+        document.getElementById("completeButton").disabled = false;
+
+        document.getElementById("completedInfo").textContent = "";
+
+        if (refreshTimer) {
+          clearInterval(refreshTimer);
+        }
+
+        await refreshAttendance();
+
+        // Refresh the dashboard automatically every 3 seconds.
+        refreshTimer = setInterval(refreshAttendance, 3000);
+
+      } catch (error) {
+        alert("Could not start session: " + error.message);
+      }
+    }
+
+    async function refreshAttendance() {
+      if (!sessionID) return;
+
+      try {
+        const data = await apiRequest("/attendance/" + sessionID);
+
+        document.getElementById("present").textContent = data.present;
+        document.getElementById("absent").textContent = data.absent;
+        document.getElementById("total").textContent = data.total_students;
+
+        document.getElementById("dateInfo").textContent =
+          "Date: " + data.date;
+
+        const table = document.getElementById("attendanceTable");
+        table.replaceChildren();
+
+        if (data.attendance.length === 0) {
+          const row = table.insertRow();
+          const cell = row.insertCell();
+
+          cell.colSpan = 4;
+          cell.textContent = "No attendance records yet.";
+        } else {
+          for (const student of data.attendance) {
+            const row = table.insertRow();
+
+            row.insertCell().textContent = student.name;
+            row.insertCell().textContent = student.uid;
+            row.insertCell().textContent =
+              new Date(student.marked_at).toLocaleTimeString();
+
+            const statusCell = row.insertCell();
+            statusCell.textContent = "PRESENT";
+            statusCell.className = "status";
+          }
+        }
+
+        isOpen = data.is_open;
+
+        document.getElementById("sessionStatus").textContent =
+          isOpen ? "Attendance in progress" : "Attendance completed";
+
+        document.getElementById("completeButton").disabled = !isOpen;
+
+        if (data.completed_at) {
+          document.getElementById("completedInfo").textContent =
+            "Completed at: " +
+            new Date(data.completed_at).toLocaleString();
+        }
+
+      } catch (error) {
+        console.error("Refresh failed:", error);
+      }
+    }
+
+    async function completeSession() {
+      if (!sessionID || !isOpen) return;
+
+      if (!confirm("Complete this attendance session?")) {
+        return;
+      }
+
+      try {
+        const data = await apiRequest(
+          "/sessions/" + sessionID + "/complete",
+          { method: "POST" }
+        );
+
+        isOpen = false;
+
+        document.getElementById("sessionStatus").textContent =
+          "Attendance completed";
+
+        document.getElementById("completedInfo").textContent =
+          "Completed at: " +
+          new Date(data.completed_at).toLocaleString();
+
+        document.getElementById("completeButton").disabled = true;
+
+        if (refreshTimer) {
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+
+        await refreshAttendance();
+
+        alert("Attendance completed successfully.");
+
+      } catch (error) {
+        alert("Could not complete attendance: " + error.message);
+      }
+    }
+  </script>
+</body>
+</html>
